@@ -1,0 +1,381 @@
+/** 
+ *  Final Code Submission
+ */
+#include "MeMCore.h"
+
+MeDCMotor motor1(M1);
+MeDCMotor motor2(M2);
+MeUltrasonicSensor sonic(PORT_3);
+MeLineFollower lineFinder(PORT_2);
+MeBuzzer buzzer;
+MeRGBLed led(0, 30);
+float turn_ratio = 2/3;
+uint8_t motorSpeedL = 200;
+uint8_t motorRedL = motorSpeedL * turn_ratio;
+uint8_t motorSpeedR = 205; // slightly higher because of the motor, it often veers off slightly
+uint8_t motorRedR = motorSpeedR * turn_ratio;
+bool STARTED = false;
+
+// *** ONBOARD RGB LED
+#define LED_PIN 13
+#define LED_DELAY 500
+#define BLACK 0
+#define WHITE 1
+#define RED 2 // left turn
+#define GREEN 3 // right turn
+#define BLUE 4 // right right
+#define PURPLE 5 // left left
+#define ORANGE 6 // 180 
+int colors[15][3] = {
+  {0, 0, 0}, // black
+  {255, 255, 255}, // white
+  {255, 0, 0}, // red
+  {0, 255, 0}, // green
+  {0, 0, 255}, // blue
+  {255, 0, 255}, // purple
+  {255, 156, 0}, // orange
+  {0, 255, 255}, // cyan
+  {255, 255, 0}, // yellow
+  (246, 134, 156), // pink
+  (255, 128, 128), // peach
+  (0, 128, 128), // cool green
+  (153, 153, 255), // violet
+  (153, 205, 255), // juvia blue
+  (51, 153, 102), // emerald green
+  };
+
+void onboard_shine_all(int color1, int color2) {
+  // shine both LEDs
+  led.setColorAt(0, colors[color1][0], colors[color1][1], colors[color1][2]);
+  led.setColorAt(1, colors[color2][0], colors[color2][1], colors[color2][2]);
+  led.show();
+}
+
+// *** MUSICS
+#define NOTE_DS4 311
+#define NOTE_E4  330
+#define NOTE_B3  247
+#define NOTE_GS3 208
+#define REPEAT_TIMES 5
+
+int melody[] = {
+  NOTE_DS4,
+  NOTE_DS4,
+  0,
+  NOTE_E4,
+  NOTE_B3,
+  NOTE_GS3,
+  NOTE_DS4
+};
+
+int noteDurations[] {
+  2, 8, 8, 2, 4, 8, 8
+};
+
+void victory_song() {
+  // repeats 
+  for (int i = 0; i < REPEAT_TIMES; i += 1) {
+    for (int thisNote = 0; thisNote < 7; thisNote++) {
+      int color1 = random(1, 14);
+      int color2 = random(1, 14);
+      onboard_shine_all(color1, color2);
+      
+      // note duration with ref to one sec.
+      // e.g. quaver = 1000/4, eigth note = 1000/8 etc
+      int noteDuration = 500/ noteDurations[thisNote];
+      buzzer.tone(melody[thisNote], noteDuration);
+ 
+      delay(noteDuration);
+      buzzer.noTone();
+      onboard_shine_all(BLACK, BLACK);
+    }  
+    delay(200);
+  }
+}
+
+// *** BUTTON
+#define BUTTON_PIN 7
+
+// *** For MODULAR LED 
+#define PIN_A 11
+#define PIN_B 12
+#define LDR_INPUT A1
+#define LDR_WAIT 10
+#define RGB_WAIT 200
+
+void shine(int color) {
+  if (color == BLACK) {
+    digitalWrite(PIN_A, LOW);
+    digitalWrite(PIN_B, HIGH);
+  } else if (color == RED) {
+    digitalWrite(PIN_A, HIGH);
+    digitalWrite(PIN_B, HIGH);
+  } else if (color == BLUE) {
+    digitalWrite(PIN_A, HIGH);
+    digitalWrite(PIN_B, LOW);
+  } else if (color == GREEN) {
+    digitalWrite(PIN_A, LOW);
+    digitalWrite(PIN_B, LOW);
+  }
+}
+
+/**
+ * Gets the average voltage reading from the LDR
+ * Usually, an average of 5 values are taken
+ */
+int getAveLDR(int times) {
+  int reading;
+  int total = 0;
+  for (int i = 0; i < times; i += 1){
+    reading = analogRead(LDR_INPUT);
+    total = reading + total;
+    delay(LDR_WAIT);
+  }
+  return total/ times;
+}
+
+/** 
+ *  Gets the intensity of the colour (R, G or B) of the paper
+ */
+int get_intensity(int color) {
+  shine(color);
+  delay(RGB_WAIT);
+  int intensity = getAveLDR(5);
+  shine(BLACK);  
+  delay(RGB_WAIT);
+  return intensity;
+}
+
+int detect_color() {
+  // returns the color of the floor (the 5 options provided)
+  int red_i = get_intensity(RED);
+  int green_i = get_intensity(GREEN);
+  int blue_i = get_intensity(BLUE);
+
+  // TODO ADD A WAY TO TEST COLOR AND THEN RETURN IT
+  return get_color(red_i, green_i, blue_i);
+}
+
+/** 
+ *  Gets the colour of the paper based on this algorithm
+ *  The values hardcoded are experimented on and are very consistent
+ *  even over different courses or locations
+ */
+int get_color(int red, int green, int blue) {
+  if (green + red + blue > 2450) {
+    return WHITE;
+  }
+  if (green + red + blue < 2100) {
+    return BLACK;
+}
+  if (red > 840) {
+    if (green < 680) {
+      return RED;
+    }
+    return ORANGE;
+  }
+  if (green < 750) {
+    return PURPLE;
+  }
+  if (blue > 800) {
+    return BLUE;
+  }
+  return GREEN;
+}
+
+/**
+ * Determines what to do based on the colour of 
+ * paper detected by the color detector
+ * Called when it hits the black line
+ */
+void determine_choice() {
+  stop(); 
+  int color = detect_color();
+  if (color == WHITE) {
+    victory_song();
+    STARTED = false;
+  }
+  if (color == RED) {
+    turn_left();
+  } else if (color == GREEN) {
+    turn_right();
+  } else if (color == ORANGE) {
+    kebelakang_pusing();
+  } else if (color == PURPLE) {
+    turn_left_twice();
+  } else if (color == BLUE) {
+    turn_right_twice();
+  }
+}
+
+// *** FOR DIRECTIONS
+#define MAX_VEER_EXTENT 8 // Ensures that the car does not veer off too strongly on each side                                              
+#define US_DISTL 6 // Maximum ultrasonic distance from the left before it should veer
+#define US_DISTR 12 // Minimum ultrasonic distance from the left before it should veer
+#define PERP_TIME 300 // Time taken to do a 90 degree turn, when both motors at motorSpeed
+#define TURN_DELAY 720 // Buffer time between turns when doing turn_left or turn right twice
+// state machine
+#define STRAIGHT 0 
+#define V_LEFT 1
+#define V_RIGHT 2
+int CURR_DIR = -1;
+int VEER_EXTENT = 0;
+
+bool update_state() { // starts the car if the button is pressed
+  if (analogRead(BUTTON_PIN) < 100) {
+    STARTED = !STARTED;
+  }
+}
+
+void straight() {
+  if (CURR_DIR != STRAIGHT) {
+    CURR_DIR = STRAIGHT;
+    motor2.run(motorSpeedL);
+    motor1.run(-motorSpeedR);
+  }
+}
+
+void stop() {
+  motor2.stop();
+  motor1.stop();
+}
+
+void veer_left() {
+  // For Proximity Sensor
+  Serial.println("Veering left");
+  if (CURR_DIR != V_LEFT) { // if just started veering left
+    VEER_EXTENT -= 1;
+    CURR_DIR = V_LEFT;
+    motor2.run(motorSpeedL);
+    motor1.run(-motorRedR);
+  } else if (VEER_EXTENT <= -MAX_VEER_EXTENT) { // just keep going straight
+    motor2.run(motorSpeedL);
+    motor1.run(-motorSpeedR);
+  } else {
+    VEER_EXTENT -= 1;
+  }
+}
+
+void veer_right() {
+  // For Ultrasonic sensor
+  Serial.println("Veering right");
+  if (CURR_DIR != V_RIGHT) { // if just started veering right
+    VEER_EXTENT += 1;
+    CURR_DIR = V_RIGHT;
+    motor2.run(motorRedL);
+    motor1.run(-motorSpeedR);
+  } else if (VEER_EXTENT >= MAX_VEER_EXTENT) { // just keep going straight
+    motor2.run(motorSpeedL);
+    motor1.run(-motorSpeedR);
+  } else {
+    VEER_EXTENT += 1;
+  }
+}
+
+void turn_right() {
+  Serial.println("Turning Left");
+  // makes a stop, followed by full turn right
+  stop();
+  motor2.run(-motorSpeedL);
+  motor1.run(-motorSpeedR);
+  delay(PERP_TIME);
+  stop();
+}
+
+void turn_left() {
+  Serial.println("Turning Left");
+  // Makes a stop, followed by full turn left
+  stop();
+  motor2.run(motorSpeedL);
+  motor1.run(motorSpeedR);
+  delay(PERP_TIME);
+  stop();
+}
+
+void turn_left_twice() {
+  Serial.println("Turning Left Twice");
+  turn_left();
+  straight();
+  delay(TURN_DELAY);
+  turn_left();
+}
+
+void turn_right_twice() {
+  Serial.println("Turning Right Twice");
+  turn_right();
+  straight();
+  delay(TURN_DELAY + 30);
+  turn_right();
+}
+
+/**
+ * Do a 180 degrees turn
+ */
+void kebelakang_pusing() {
+  Serial.println("Turning Left");
+  // Makes a stop, followed by full turn left
+  motor2.run(-motorSpeedL);
+  motor1.run(-motorSpeedR);
+  delay(1.9 * PERP_TIME); // 1.9 instead of 2 because for some reason, it keeps overshooting
+  stop();
+}
+
+
+
+// ** START ***
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  Serial.println("Started");
+  led.setpin(LED_PIN);
+  pinMode(BUTTON_PIN, INPUT);
+  pinMode(PIN_A, OUTPUT);
+  pinMode(PIN_B, OUTPUT);
+  // turn all the lights off when starting
+  onboard_shine_all(BLACK, BLACK);
+  shine(BLACK);
+}
+
+// *** PROXIMITY SENSOR AND BUTTON*** 0-7 cm
+#define PROX_PIN A0 // for analog
+#define PROX_THRESH 300 // equivalent to 4cm
+#define PROX_VOLTAGE 4 // to be altered based on when voltage plateaus
+
+double proxDistance() {
+  double voltage = analogRead(PROX_PIN);
+  return voltage;
+}
+
+void loop() {
+  // for the line finder
+  update_state(); // check if the button has been pressed
+  if (STARTED) {
+    // for the ultrasonic sensor
+    double dist = sonic.distanceCm();
+    double proxDist = proxDistance();
+    Serial.println(proxDist);
+    Serial.println(dist); 
+    if (dist < US_DISTL) {
+      // make sure it veers rightwards, away from wall
+      veer_right();
+    } else if (proxDist < PROX_THRESH || (dist > US_DISTR && dist < 25)) { 
+      // Ultrasonic_Distance < 25 because there is DEFINITELY no wall beyond 25cm, 
+      // make sure it veers leftwards, away from wall
+      veer_left();
+    } else {
+      straight();
+    }
+
+    // stop if hits the black line
+    int sensorState = lineFinder.readSensors();
+    // IN_OUT and OUT_IN sometimes causes it to activate when it approaches the coloured paper
+    // laterally
+    if (sensorState == S1_IN_S2_IN || sensorState == S1_IN_S2_OUT || 
+        sensorState == S1_OUT_S2_IN) { 
+      determine_choice();
+    }
+  } else {
+    stop();
+  }
+  delay(30);
+}
